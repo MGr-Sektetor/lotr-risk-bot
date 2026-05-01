@@ -7,7 +7,8 @@ Discord bot that monitors [WC3Stats](https://api.wc3stats.com/gamelist) for acti
 - **New lobby** — posts a new embed at the bottom of the channel
 - **Active lobby** — edits the embed every 60 seconds with the latest player count
 - **Lobby closes** — edits the embed to a grey "Closed" state, keeping the final player count
-- **Restart-safe** — on startup the bot scans the last 100 channel messages to restore state, so it never re-posts a lobby it already knows about
+- **Restart-safe** — on startup scans the last 100 channel messages to restore state, never re-posts a lobby it already knows about
+- **Self-cleaning** — on startup deletes any duplicate or orphaned bot messages left over from previous runs
 
 ## Notification preview
 
@@ -116,5 +117,5 @@ flyctl secrets list  # list secrets (values hidden)
 |---|---|---|---|
 | `DISCORD_TOKEN` | Yes | — | Discord bot token |
 | `DISCORD_CHANNEL_ID` | Yes | — | Channel to post notifications in |
-| `GAME_FILTER` | No | `LOTR RISK` | Case-insensitive substring to match game names |
+| `MAP_FILTER` | No | `LOTR RISK` | Case-insensitive substring to match map names |
 | `POLL_INTERVAL` | No | `60` | Seconds between API polls |
