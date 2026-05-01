@@ -8,7 +8,7 @@ import aiohttp
 
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 CHANNEL_ID = int(os.environ["DISCORD_CHANNEL_ID"])
-GAME_FILTER = os.environ.get("GAME_FILTER", "LOTR RISK").upper()
+MAP_FILTER = os.environ.get("MAP_FILTER", "LOTR RISK").upper()
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "60"))
 
 WC3STATS_URL = "https://api.wc3stats.com/gamelist"
@@ -64,17 +64,30 @@ def make_closed_embed(game: dict) -> discord.Embed:
 
 
 async def restore_posted(channel: discord.TextChannel) -> None:
-    """On startup, scan recent messages to avoid re-posting lobbies already shown."""
+    """On startup, scan recent messages to restore state and delete duplicates.
+
+    channel.history() returns newest-first, so the first message we find for
+    a given lobby id is the most recent one — that's the one we keep.
+    Any older messages with the same id are duplicates and get deleted.
+    """
     async for msg in channel.history(limit=100):
         if msg.author != client.user or not msg.embeds:
             continue
         footer = msg.embeds[0].footer.text or ""
         match = FOOTER_ID_RE.search(footer)
-        if match:
-            gid = match.group(1)
-            if gid not in posted:
-                posted[gid] = msg.id
-                print(f"[INFO] Restored posted lobby id={gid}")
+        if not match:
+            continue
+        gid = match.group(1)
+        if gid not in posted:
+            posted[gid] = msg.id
+            print(f"[INFO] Restored posted lobby id={gid}")
+        else:
+            # Duplicate — delete the older message
+            try:
+                await msg.delete()
+                print(f"[INFO] Deleted duplicate message for lobby id={gid}")
+            except Exception as e:
+                print(f"[WARN] Could not delete duplicate: {e}")
 
 
 @tasks.loop(seconds=POLL_INTERVAL)
@@ -96,7 +109,7 @@ async def poll():
         return
 
     games = data.get("body", [])
-    matching = {str(g["id"]): g for g in games if GAME_FILTER in g.get("name", "").upper()}
+    matching = {str(g["id"]): g for g in games if MAP_FILTER in g.get("map", "").upper()}
 
     # Update last_seen, post new lobbies, edit existing ones
     for gid, game in matching.items():
@@ -132,7 +145,7 @@ async def before_poll():
 
 @client.event
 async def on_ready():
-    print(f"[INFO] Logged in as {client.user} — polling every {POLL_INTERVAL}s for '{GAME_FILTER}'")
+    print(f"[INFO] Logged in as {client.user} — polling every {POLL_INTERVAL}s for map '{MAP_FILTER}'")
     channel = client.get_channel(CHANNEL_ID)
     if channel:
         await restore_posted(channel)

@@ -6,8 +6,11 @@ primary_region = "ams"
 
 [build]
 
+[deploy]
+  strategy = "immediate"
+
 [env]
-  GAME_FILTER = "LOTR RISK"
+  MAP_FILTER = "LOTR RISK"
   POLL_INTERVAL = "60"
 
 # No HTTP services needed — this is a worker bot
