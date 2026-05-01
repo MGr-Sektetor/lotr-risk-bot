@@ -1,0 +1,27 @@
+name: Deploy to Fly.io
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Push secrets to Fly.io
+        run: |
+          flyctl secrets set \
+            DISCORD_TOKEN="${{ secrets.DISCORD_TOKEN }}" \
+            DISCORD_CHANNEL_ID="${{ secrets.DISCORD_CHANNEL_ID }}" \
+            --app lotr-risk-bot
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Deploy
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

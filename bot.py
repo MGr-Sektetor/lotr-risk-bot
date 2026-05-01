@@ -1,5 +1,4 @@
 import os
-import asyncio
 from datetime import datetime, timezone
 
 import discord
@@ -12,8 +11,9 @@ GAME_FILTER = os.environ.get("GAME_FILTER", "LOTR RISK").upper()
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "60"))
 
 WC3STATS_URL = "https://api.wc3stats.com/gamelist"
+ENT_URL = "https://host.entgaming.net/allgames"
 
-SERVER_NAMES = {
+WC3STATS_SERVER_NAMES = {
     "usw": "US West",
     "use": "US East",
     "eu": "Europe",
@@ -28,6 +28,79 @@ client = discord.Client(intents=intents)
 tracked: dict[str, int] = {}
 
 
+# --- API normalisation ---
+
+def _ent_uptime_to_seconds(uptime: str) -> int:
+    """Convert ENT uptime string 'H:MM' to seconds."""
+    try:
+        parts = uptime.split(":")
+        if len(parts) == 2:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+    except (ValueError, AttributeError):
+        pass
+    return 0
+
+
+def _normalise_wc3stats(game: dict) -> dict:
+    server_code = game.get("server", "?")
+    return {
+        "id": str(game["id"]),
+        "name": game.get("name", "Unknown"),
+        "map": game.get("map", "Unknown"),
+        "host": game.get("host", "Unknown"),
+        "slots_taken": game.get("slotsTaken", 0),
+        "slots_total": game.get("slotsTotal", 0),
+        "server": WC3STATS_SERVER_NAMES.get(server_code, server_code.upper()),
+        "uptime": game.get("uptime", 0),
+        "created": game.get("created", 0),
+        "source": "WC3Stats",
+    }
+
+
+def _normalise_ent(game: dict) -> dict:
+    return {
+        "id": f"ent-{game['id']}",
+        "name": game.get("name", "Unknown"),
+        "map": game.get("map", "Unknown"),
+        "host": game.get("host") or "ENT Bot",
+        "slots_taken": game.get("slots_taken", 0),
+        "slots_total": game.get("slots_total", 0),
+        "server": game.get("location", "Unknown"),
+        "uptime": _ent_uptime_to_seconds(game.get("uptime", "0:00")),
+        "created": 0,
+        "source": "WC3Connect",
+    }
+
+
+async def fetch_games(session: aiohttp.ClientSession) -> tuple[list[dict], str]:
+    """Try WC3Stats first, fall back to ENT. Returns (games, source_label)."""
+    try:
+        async with session.get(WC3STATS_URL, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                games = [_normalise_wc3stats(g) for g in data.get("body", [])]
+                return games, "WC3Stats"
+            print(f"[WARN] WC3Stats returned HTTP {resp.status}, trying ENT fallback")
+    except Exception as e:
+        print(f"[WARN] WC3Stats failed ({e}), trying ENT fallback")
+
+    try:
+        async with session.get(ENT_URL, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                games = [_normalise_ent(g) for g in data]
+                return games, "WC3Connect"
+            print(f"[WARN] ENT returned HTTP {resp.status}")
+    except Exception as e:
+        print(f"[ERROR] ENT fallback also failed: {e}")
+
+    return [], ""
+
+
+# --- Discord embeds ---
+
 def uptime_str(seconds: int) -> str:
     if seconds < 60:
         return f"{seconds}s"
@@ -39,34 +112,17 @@ def uptime_str(seconds: int) -> str:
 
 
 def make_active_embed(game: dict) -> discord.Embed:
-    name = game.get("name", "Unknown")
-    map_name = game.get("map", "Unknown")
-    host = game.get("host", "Unknown")
-    taken = game.get("slotsTaken", 0)
-    total = game.get("slotsTotal", 0)
-    server_code = game.get("server", "?")
-    server = SERVER_NAMES.get(server_code, server_code.upper())
-    uptime = game.get("uptime", 0)
-    created = game.get("created", 0)
+    embed = discord.Embed(title=f"🏰 {game['name']}", color=discord.Color.gold())
+    embed.add_field(name="🗺️ Map", value=game["map"], inline=True)
+    embed.add_field(name="👤 Host", value=game["host"], inline=True)
+    embed.add_field(name="🌍 Server", value=game["server"], inline=True)
+    embed.add_field(name="👥 Players", value=f"**{game['slots_taken']} / {game['slots_total']}**", inline=True)
+    embed.add_field(name="⏱️ Uptime", value=uptime_str(game["uptime"]), inline=True)
 
-    embed = discord.Embed(
-        title=f"🏰 {name}",
-        color=discord.Color.gold(),
-    )
-    embed.add_field(name="🗺️ Map", value=map_name, inline=True)
-    embed.add_field(name="👤 Host", value=host, inline=True)
-    embed.add_field(name="🌍 Server", value=server, inline=True)
-    embed.add_field(name="👥 Players", value=f"**{taken} / {total}**", inline=True)
-    embed.add_field(name="⏱️ Uptime", value=uptime_str(uptime), inline=True)
+    if game["created"]:
+        embed.add_field(name="📅 Created", value=f"<t:{game['created']}:R>", inline=True)
 
-    if created:
-        embed.add_field(
-            name="📅 Created",
-            value=f"<t:{created}:R>",
-            inline=True,
-        )
-
-    embed.set_footer(text="🔄 Last updated")
+    embed.set_footer(text=f"🔄 Last updated • Source: {game['source']}")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
@@ -81,6 +137,8 @@ def make_closed_embed(name: str) -> discord.Embed:
     return embed
 
 
+# --- Polling task ---
+
 @tasks.loop(seconds=POLL_INTERVAL)
 async def poll():
     channel = client.get_channel(CHANNEL_ID)
@@ -88,27 +146,17 @@ async def poll():
         print("[WARN] Channel not found — check DISCORD_CHANNEL_ID")
         return
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                WC3STATS_URL, timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                if resp.status != 200:
-                    print(f"[WARN] WC3Stats returned HTTP {resp.status}")
-                    return
-                data = await resp.json()
-    except Exception as e:
-        print(f"[ERROR] Fetch failed: {e}")
+    async with aiohttp.ClientSession() as session:
+        games, source = await fetch_games(session)
+
+    if not source:
+        print("[ERROR] Both APIs failed, skipping this poll")
         return
 
-    games = data.get("body", [])
     matching = {
-        str(g["id"]): g
-        for g in games
-        if GAME_FILTER in g.get("name", "").upper()
+        g["id"]: g for g in games if GAME_FILTER in g["name"].upper()
     }
 
-    # Update or post messages for active lobbies
     for gid, game in matching.items():
         embed = make_active_embed(game)
         if gid in tracked:
@@ -121,14 +169,12 @@ async def poll():
         else:
             msg = await channel.send(embed=embed)
             tracked[gid] = msg.id
-            print(f"[INFO] New lobby: {game.get('name')} (id={gid})")
+            print(f"[INFO] New lobby via {source}: {game['name']} (id={gid})")
 
-    # Mark closed lobbies
     for gid in list(tracked.keys()):
         if gid not in matching:
             try:
                 msg = await channel.fetch_message(tracked[gid])
-                # Best-effort: get the last known name from the embed title
                 old_name = "LOTR RISK"
                 if msg.embeds:
                     title = msg.embeds[0].title or ""
