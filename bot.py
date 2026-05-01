@@ -76,6 +76,12 @@ async def restore_posted(channel: discord.TextChannel) -> None:
         footer = msg.embeds[0].footer.text or ""
         match = FOOTER_ID_RE.search(footer)
         if not match:
+            # No id in footer — orphan from old bot code, delete it
+            try:
+                await msg.delete()
+                print(f"[INFO] Deleted orphaned message {msg.id}")
+            except Exception as e:
+                print(f"[WARN] Could not delete orphan: {e}")
             continue
         gid = match.group(1)
         if gid not in posted:
