@@ -1,0 +1,15 @@
+# fly.toml — Fly.io configuration for lotr-risk-bot
+# Deploy with: fly deploy
+
+app = "lotr-risk-bot"
+primary_region = "ams"
+
+[build]
+
+[env]
+  GAME_FILTER = "LOTR RISK"
+  POLL_INTERVAL = "60"
+
+# No HTTP services needed — this is a worker bot
+# Secrets (DISCORD_TOKEN, DISCORD_CHANNEL_ID) are set via:
+#   fly secrets set DISCORD_TOKEN=xxx DISCORD_CHANNEL_ID=yyy
