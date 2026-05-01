@@ -24,8 +24,12 @@ SERVER_NAMES = {
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 
-# game id (str) -> discord message id (int)
-tracked: dict[str, int] = {}
+# Lobbies we have already posted about (id -> message id). Never removed so
+# we never re-post the same lobby even if it briefly disappears from the API.
+posted: dict[str, int] = {}
+
+# Last known game data for active lobbies, used to get player count on close.
+last_seen: dict[str, dict] = {}
 
 FOOTER_ID_RE = re.compile(r"id:(\S+)")
 
@@ -40,35 +44,37 @@ def make_active_embed(game: dict) -> discord.Embed:
     embed.add_field(name="👥 Players", value=f"**{game.get('slotsTaken', 0)} / {game.get('slotsTotal', 0)}**", inline=True)
     if game.get("created"):
         embed.add_field(name="📅 Created", value=f"<t:{game['created']}:R>", inline=True)
-    # Game ID stored in footer so the bot can recover state after a restart
-    embed.set_footer(text=f"🔄 Last updated • id:{gid}")
+    embed.set_footer(text=f"id:{gid}")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
 
-def make_closed_embed(name: str) -> discord.Embed:
+def make_closed_embed(game: dict) -> discord.Embed:
+    name = game.get("name", "LOTR RISK")
+    taken = game.get("slotsTaken", 0)
+    total = game.get("slotsTotal", 0)
     embed = discord.Embed(
         title=f"🔒 {name} — Closed",
-        description="This lobby is no longer available.",
         color=discord.Color.dark_gray(),
     )
+    embed.add_field(name="👥 Players at close", value=f"{taken} / {total}", inline=True)
+    embed.set_footer(text=f"id:{game['id']}")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
 
-async def restore_tracked(channel: discord.TextChannel) -> None:
-    """Scan recent channel messages to rebuild tracked state after a restart."""
-    async for msg in channel.history(limit=50):
+async def restore_posted(channel: discord.TextChannel) -> None:
+    """On startup, scan recent messages to avoid re-posting lobbies already shown."""
+    async for msg in channel.history(limit=100):
         if msg.author != client.user or not msg.embeds:
             continue
         footer = msg.embeds[0].footer.text or ""
         match = FOOTER_ID_RE.search(footer)
-        # Only restore active (gold) embeds, not closed ones
-        if match and msg.embeds[0].color == discord.Color.gold():
+        if match:
             gid = match.group(1)
-            if gid not in tracked:
-                tracked[gid] = msg.id
-                print(f"[INFO] Restored tracked lobby id={gid} from message {msg.id}")
+            if gid not in posted:
+                posted[gid] = msg.id
+                print(f"[INFO] Restored posted lobby id={gid}")
 
 
 @tasks.loop(seconds=POLL_INTERVAL)
@@ -92,33 +98,31 @@ async def poll():
     games = data.get("body", [])
     matching = {str(g["id"]): g for g in games if GAME_FILTER in g.get("name", "").upper()}
 
+    # Update last_seen, post new lobbies, edit existing ones
     for gid, game in matching.items():
-        embed = make_active_embed(game)
-        if gid in tracked:
-            try:
-                msg = await channel.fetch_message(tracked[gid])
-                await msg.edit(embed=embed)
-            except discord.NotFound:
-                msg = await channel.send(embed=embed)
-                tracked[gid] = msg.id
-        else:
-            msg = await channel.send(embed=embed)
-            tracked[gid] = msg.id
+        last_seen[gid] = game
+        if gid not in posted:
+            msg = await channel.send(embed=make_active_embed(game))
+            posted[gid] = msg.id
             print(f"[INFO] New lobby: {game.get('name')} (id={gid})")
-
-    for gid in list(tracked.keys()):
-        if gid not in matching:
+        else:
             try:
-                msg = await channel.fetch_message(tracked[gid])
-                old_name = "LOTR RISK"
-                if msg.embeds:
-                    title = msg.embeds[0].title or ""
-                    old_name = title.lstrip("🏰 ").strip() or old_name
-                await msg.edit(embed=make_closed_embed(old_name))
-            except Exception as e:
-                print(f"[WARN] Could not update closed lobby {gid}: {e}")
-            del tracked[gid]
-            print(f"[INFO] Lobby closed (id={gid})")
+                msg = await channel.fetch_message(posted[gid])
+                await msg.edit(embed=make_active_embed(game))
+            except discord.NotFound:
+                pass
+
+    # Detect closed lobbies
+    for gid in list(last_seen.keys()):
+        if gid not in matching:
+            game = last_seen.pop(gid)
+            if gid in posted:
+                try:
+                    msg = await channel.fetch_message(posted[gid])
+                    await msg.edit(embed=make_closed_embed(game))
+                    print(f"[INFO] Lobby closed (id={gid})")
+                except Exception as e:
+                    print(f"[WARN] Could not mark lobby {gid} as closed: {e}")
 
 
 @poll.before_loop
@@ -131,7 +135,7 @@ async def on_ready():
     print(f"[INFO] Logged in as {client.user} — polling every {POLL_INTERVAL}s for '{GAME_FILTER}'")
     channel = client.get_channel(CHANNEL_ID)
     if channel:
-        await restore_tracked(channel)
+        await restore_posted(channel)
     poll.start()
 
 
