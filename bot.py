@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime, timezone
 
 import discord
@@ -26,28 +27,21 @@ client = discord.Client(intents=intents)
 # game id (str) -> discord message id (int)
 tracked: dict[str, int] = {}
 
-
-def uptime_str(seconds: int) -> str:
-    if seconds < 60:
-        return f"{seconds}s"
-    if seconds < 3600:
-        return f"{seconds // 60}m {seconds % 60}s"
-    h = seconds // 3600
-    m = (seconds % 3600) // 60
-    return f"{h}h {m}m"
+FOOTER_ID_RE = re.compile(r"id:(\S+)")
 
 
 def make_active_embed(game: dict) -> discord.Embed:
     server_code = game.get("server", "?")
+    gid = str(game["id"])
     embed = discord.Embed(title=f"🏰 {game.get('name', 'Unknown')}", color=discord.Color.gold())
     embed.add_field(name="🗺️ Map", value=game.get("map", "Unknown"), inline=True)
     embed.add_field(name="👤 Host", value=game.get("host", "Unknown"), inline=True)
     embed.add_field(name="🌍 Server", value=SERVER_NAMES.get(server_code, server_code.upper()), inline=True)
     embed.add_field(name="👥 Players", value=f"**{game.get('slotsTaken', 0)} / {game.get('slotsTotal', 0)}**", inline=True)
-    embed.add_field(name="⏱️ Uptime", value=uptime_str(game.get("uptime", 0)), inline=True)
     if game.get("created"):
         embed.add_field(name="📅 Created", value=f"<t:{game['created']}:R>", inline=True)
-    embed.set_footer(text="🔄 Last updated")
+    # Game ID stored in footer so the bot can recover state after a restart
+    embed.set_footer(text=f"🔄 Last updated • id:{gid}")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
@@ -60,6 +54,21 @@ def make_closed_embed(name: str) -> discord.Embed:
     )
     embed.timestamp = datetime.now(timezone.utc)
     return embed
+
+
+async def restore_tracked(channel: discord.TextChannel) -> None:
+    """Scan recent channel messages to rebuild tracked state after a restart."""
+    async for msg in channel.history(limit=50):
+        if msg.author != client.user or not msg.embeds:
+            continue
+        footer = msg.embeds[0].footer.text or ""
+        match = FOOTER_ID_RE.search(footer)
+        # Only restore active (gold) embeds, not closed ones
+        if match and msg.embeds[0].color == discord.Color.gold():
+            gid = match.group(1)
+            if gid not in tracked:
+                tracked[gid] = msg.id
+                print(f"[INFO] Restored tracked lobby id={gid} from message {msg.id}")
 
 
 @tasks.loop(seconds=POLL_INTERVAL)
@@ -120,6 +129,9 @@ async def before_poll():
 @client.event
 async def on_ready():
     print(f"[INFO] Logged in as {client.user} — polling every {POLL_INTERVAL}s for '{GAME_FILTER}'")
+    channel = client.get_channel(CHANNEL_ID)
+    if channel:
+        await restore_tracked(channel)
     poll.start()
 
 
