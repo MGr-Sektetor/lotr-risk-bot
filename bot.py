@@ -96,6 +96,8 @@ async def restore_posted(channel: discord.TextChannel) -> None:
                 print(f"[WARN] Could not delete duplicate: {e}")
 
 
+
+
 @tasks.loop(seconds=POLL_INTERVAL)
 async def poll():
     channel = client.get_channel(CHANNEL_ID)
