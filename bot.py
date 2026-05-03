@@ -37,7 +37,7 @@ FOOTER_ID_RE = re.compile(r"id:(\S+)")
 def make_active_embed(game: dict) -> discord.Embed:
     server_code = game.get("server", "?")
     gid = str(game["id"])
-    embed = discord.Embed(title=f"🏰 {game.get('name', 'Unknown')}", color=discord.Color.gold())
+    embed = discord.Embed(title=f"🏰 {game.get('name', 'Unknown')}", color=discord.Color.green())
     embed.add_field(name="🗺️ Map", value=game.get("map", "Unknown"), inline=True)
     embed.add_field(name="👤 Host", value=game.get("host", "Unknown"), inline=True)
     embed.add_field(name="🌍 Server", value=SERVER_NAMES.get(server_code, server_code.upper()), inline=True)
@@ -117,6 +117,10 @@ async def poll():
         return
 
     games = data.get("body", [])
+    lotr_games = [g for g in games if "lotr" in g.get("map", "").lower() or "lotr" in g.get("name", "").lower()]
+    if lotr_games:
+        for g in lotr_games:
+            print(f"[DEBUG] Seen: name='{g.get('name')}' map='{g.get('map')}' id={g.get('id')}")
     matching = {str(g["id"]): g for g in games if MAP_FILTER in g.get("map", "").upper()}
 
     # Update last_seen, post new lobbies, edit existing ones
