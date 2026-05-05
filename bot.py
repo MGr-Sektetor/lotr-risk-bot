@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from datetime import datetime, timezone
 
 import discord
@@ -31,6 +32,9 @@ posted: dict[str, int] = {}
 
 # Last known game data for active lobbies, used to get player count on close.
 last_seen: dict[str, dict] = {}
+
+# Timestamp when each lobby was marked closed, used to detect genuine re-opens.
+closed_at: dict[str, float] = {}
 
 FOOTER_ID_RE = re.compile(r"id:(\S+)")
 
@@ -174,7 +178,8 @@ async def poll():
     # Update last_seen, post new lobbies, edit existing ones
     for gid, game in matching.items():
         last_seen[gid] = game
-        if gid not in posted:
+        is_reopen = gid not in last_seen and time.time() - closed_at.get(gid, 0) > 60
+        if gid not in posted or is_reopen:
             msg = await channel.send(embed=make_active_embed(game))
             posted[gid] = msg.id
             print(f"[INFO] New lobby: {game.get('name')} (id={gid})")
@@ -189,6 +194,7 @@ async def poll():
     for gid in list(last_seen.keys()):
         if gid not in matching:
             game = last_seen.pop(gid)
+            closed_at[gid] = time.time()
             if gid in posted:
                 try:
                     msg = await channel.fetch_message(posted[gid])
