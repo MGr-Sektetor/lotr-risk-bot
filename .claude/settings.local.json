@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl -s \"https://api.wc3stats.com/games/7313\")",
+      "Bash(curl -s \"https://api.wc3stats.com/lobby/7313\")",
+      "Bash(curl -s \"https://api.wc3stats.com/gamelist?id=7313&players=true\")",
+      "Bash(curl -s \"https://wc3stats.com/games/7313\")",
+      "WebFetch(domain:wc3tracker.com)",
+      "WebSearch"
     ]
   }
 }

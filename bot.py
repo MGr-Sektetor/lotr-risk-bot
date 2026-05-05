@@ -12,6 +12,7 @@ MAP_FILTER = os.environ.get("MAP_FILTER", "LOTR RISK").upper()
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "60"))
 
 WC3STATS_URL = "https://api.wc3stats.com/gamelist"
+WC3MAPS_URL = "https://wc3maps.com/api/lobbies"
 
 SERVER_NAMES = {
     "usw": "US West",
@@ -63,6 +64,59 @@ def make_closed_embed(game: dict) -> discord.Embed:
     return embed
 
 
+def _normalize_wc3maps(g: dict) -> dict:
+    """Convert a wc3maps game object to wc3stats field names."""
+    return {
+        "id": f"wc3maps-{g['id']}",
+        "name": g.get("name", "Unknown"),
+        "map": g.get("path", "Unknown"),
+        "host": g.get("host", "Unknown"),
+        "server": g.get("region", "?"),
+        "slotsTaken": g.get("slots_taken", 0),
+        "slotsTotal": g.get("slots_total", 0),
+        "created": g.get("created"),
+    }
+
+
+async def _fetch_wc3stats() -> list[dict] | None:
+    """Returns game list on success, None on any error."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(WC3STATS_URL, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    print(f"[WARN] WC3Stats returned HTTP {resp.status}")
+                    return None
+                data = await resp.json()
+                return data.get("body", [])
+    except Exception as e:
+        print(f"[ERROR] WC3Stats fetch failed: {e}")
+        return None
+
+
+async def _fetch_wc3maps() -> list[dict] | None:
+    """Returns normalised game list on success, None on any error."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(WC3MAPS_URL, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    print(f"[WARN] wc3maps returned HTTP {resp.status}")
+                    return None
+                data = await resp.json()
+                return [_normalize_wc3maps(g) for g in data.get("data", [])]
+    except Exception as e:
+        print(f"[ERROR] wc3maps fetch failed: {e}")
+        return None
+
+
+async def fetch_games() -> list[dict] | None:
+    """Try WC3Stats first. Fall back to wc3maps.com on error."""
+    games = await _fetch_wc3stats()
+    if games is not None:
+        return games
+    print("[WARN] WC3Stats unavailable, falling back to wc3maps.com")
+    return await _fetch_wc3maps()
+
+
 async def restore_posted(channel: discord.TextChannel) -> None:
     """On startup, scan recent messages to restore state and delete duplicates.
 
@@ -96,8 +150,6 @@ async def restore_posted(channel: discord.TextChannel) -> None:
                 print(f"[WARN] Could not delete duplicate: {e}")
 
 
-
-
 @tasks.loop(seconds=POLL_INTERVAL)
 async def poll():
     channel = client.get_channel(CHANNEL_ID)
@@ -105,22 +157,10 @@ async def poll():
         print("[WARN] Channel not found — check DISCORD_CHANNEL_ID")
         return
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(WC3STATS_URL, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:
-                    print(f"[WARN] WC3Stats returned HTTP {resp.status}")
-                    return
-                data = await resp.json()
-    except Exception as e:
-        print(f"[ERROR] Fetch failed: {e}")
+    games = await fetch_games()
+    if games is None:
         return
 
-    games = data.get("body", [])
-    lotr_games = [g for g in games if "lotr" in g.get("map", "").lower() or "lotr" in g.get("name", "").lower()]
-    if lotr_games:
-        for g in lotr_games:
-            print(f"[DEBUG] Seen: name='{g.get('name')}' map='{g.get('map')}' id={g.get('id')}")
     matching = {str(g["id"]): g for g in games if MAP_FILTER in g.get("map", "").upper()}
 
     # Update last_seen, post new lobbies, edit existing ones
