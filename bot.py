@@ -175,6 +175,9 @@ async def poll():
     if games is None:
         return
 
+    lotr = [g for g in games if "lotr" in g.get("map", "").lower() or "lotr" in g.get("name", "").lower()]
+    for g in lotr:
+        print(f"[DEBUG] candidate: name='{g.get('name')}' map='{g.get('map')}' id={g.get('id')}")
     matching = {str(g["id"]): g for g in games if MAP_FILTER in g.get("map", "").upper()}
 
     # Update last_seen, post new lobbies, edit existing ones
