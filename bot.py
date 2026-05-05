@@ -111,7 +111,7 @@ async def _fetch_wc3maps() -> list[dict] | None:
 async def fetch_games() -> list[dict] | None:
     """Try WC3Stats first. Fall back to wc3maps.com on error."""
     games = await _fetch_wc3stats()
-    if games is not None:
+    if games:
         return games
     print("[WARN] WC3Stats unavailable, falling back to wc3maps.com")
     return await _fetch_wc3maps()
