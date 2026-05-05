@@ -58,6 +58,8 @@ def make_closed_embed(game: dict) -> discord.Embed:
         title=f"🔒 {name} — Closed",
         color=discord.Color.dark_gray(),
     )
+    embed.add_field(name="🗺️ Map", value=game.get("map", "Unknown"), inline=True)
+    embed.add_field(name="👤 Host", value=game.get("host", "Unknown"), inline=True)
     embed.add_field(name="👥 Players at close", value=f"{taken} / {total}", inline=True)
     embed.set_footer(text=f"id:{game['id']}")
     embed.timestamp = datetime.now(timezone.utc)
@@ -65,13 +67,19 @@ def make_closed_embed(game: dict) -> discord.Embed:
 
 
 def _normalize_wc3maps(g: dict) -> dict:
-    """Convert a wc3maps game object to wc3stats field names."""
+    """Convert a wc3maps game object to wc3stats field names.
+
+    wc3maps assigns a new numeric id whenever a player joins, so we derive a
+    stable id from host+region — a player can only host one game at a time.
+    """
+    host = g.get("host", "Unknown")
+    region = g.get("region", "?")
     return {
-        "id": f"wc3maps-{g['id']}",
+        "id": f"wc3maps-{host}-{region}",
         "name": g.get("name", "Unknown"),
         "map": g.get("path", "Unknown"),
-        "host": g.get("host", "Unknown"),
-        "server": g.get("region", "?"),
+        "host": host,
+        "server": region,
         "slotsTaken": g.get("slots_taken", 0),
         "slotsTotal": g.get("slots_total", 0),
         "created": g.get("created"),
