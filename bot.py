@@ -113,8 +113,10 @@ async def _fetch_wc3maps() -> list[dict] | None:
                 if resp.status != 200:
                     print(f"[WARN] wc3maps returned HTTP {resp.status}")
                     return None
-                data = await resp.json()
-                return [_normalize_wc3maps(g) for g in data.get("data", [])]
+                data = await resp.json(content_type=None)
+                games = [_normalize_wc3maps(g) for g in data.get("data", [])]
+                print(f"[INFO] wc3maps returned {len(games)} games")
+                return games
     except Exception as e:
         print(f"[ERROR] wc3maps fetch failed: {e}")
         return None
