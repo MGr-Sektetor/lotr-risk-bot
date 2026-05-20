@@ -163,45 +163,46 @@ async def restore_posted(channel: discord.TextChannel) -> None:
 
 @tasks.loop(seconds=POLL_INTERVAL)
 async def poll():
-    channel = client.get_channel(CHANNEL_ID)
-    if channel is None:
-        print("[WARN] Channel not found — check DISCORD_CHANNEL_ID")
-        return
+    try:
+        channel = client.get_channel(CHANNEL_ID)
+        if channel is None:
+            print("[WARN] Channel not found — check DISCORD_CHANNEL_ID")
+            return
 
-    games = await fetch_games()
-    if games is None:
-        return
+        games = await fetch_games()
+        if games is None:
+            return
 
-    lotr = [g for g in games if "lotr" in g.get("map", "").lower() or "lotr" in g.get("name", "").lower()]
-    for g in lotr:
-        print(f"[DEBUG] candidate: name='{g.get('name')}' map='{g.get('map')}' id={g.get('id')}")
-    matching = {str(g["id"]): g for g in games if MAP_FILTER in g.get("map", "").upper()}
+        matching = {str(g["id"]): g for g in games if MAP_FILTER in g.get("map", "").upper()}
 
-    # Update last_seen, post new lobbies, edit existing ones
-    for gid, game in matching.items():
-        if gid not in last_seen:
-            msg = await channel.send(embed=make_active_embed(game))
-            posted[gid] = msg.id
-            print(f"[INFO] New lobby: {game.get('name')} (id={gid})")
-        else:
-            try:
-                msg = await channel.fetch_message(posted[gid])
-                await msg.edit(embed=make_active_embed(game))
-            except discord.NotFound:
-                pass
-        last_seen[gid] = game
-
-    # Detect closed lobbies
-    for gid in list(last_seen.keys()):
-        if gid not in matching:
-            game = last_seen.pop(gid)
-            if gid in posted:
+        # Update last_seen, post new lobbies, edit existing ones
+        for gid, game in matching.items():
+            if gid not in last_seen:
+                if gid not in posted:
+                    msg = await channel.send(embed=make_active_embed(game))
+                    posted[gid] = msg.id
+                    print(f"[INFO] New lobby: {game.get('name')} (id={gid})")
+            else:
                 try:
                     msg = await channel.fetch_message(posted[gid])
-                    await msg.edit(embed=make_closed_embed(game))
-                    print(f"[INFO] Lobby closed (id={gid})")
-                except Exception as e:
-                    print(f"[WARN] Could not mark lobby {gid} as closed: {e}")
+                    await msg.edit(embed=make_active_embed(game))
+                except (discord.NotFound, discord.HTTPException):
+                    pass
+            last_seen[gid] = game
+
+        # Detect closed lobbies
+        for gid in list(last_seen.keys()):
+            if gid not in matching:
+                game = last_seen.pop(gid)
+                if gid in posted:
+                    try:
+                        msg = await channel.fetch_message(posted[gid])
+                        await msg.edit(embed=make_closed_embed(game))
+                        print(f"[INFO] Lobby closed (id={gid})")
+                    except Exception as e:
+                        print(f"[WARN] Could not mark lobby {gid} as closed: {e}")
+    except Exception as e:
+        print(f"[ERROR] Poll iteration failed: {e}")
 
 
 @poll.before_loop
