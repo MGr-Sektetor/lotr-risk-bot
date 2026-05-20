@@ -151,6 +151,18 @@ async def restore_posted(channel: discord.TextChannel) -> None:
         gid = match.group(1)
         if gid not in posted:
             posted[gid] = msg.id
+            embed = msg.embeds[0]
+            # Restore last_seen for active embeds so close detection survives restarts
+            if not embed.title or "— Closed" not in embed.title:
+                fields = {f.name: f.value for f in embed.fields}
+                last_seen[gid] = {
+                    "id": gid,
+                    "name": embed.title.lstrip("🏰 ") if embed.title else "Unknown",
+                    "map": fields.get("🗺️ Map", "Unknown"),
+                    "host": fields.get("👤 Host", "Unknown"),
+                    "slotsTaken": 0,
+                    "slotsTotal": 0,
+                }
             print(f"[INFO] Restored posted lobby id={gid}")
         else:
             # Duplicate — delete the older message
